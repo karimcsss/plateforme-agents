@@ -1,7 +1,9 @@
-from fastapi import FastAPI
-from pydantic import BaseModel
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel, ValidationError
 
 from app.llm.factory import get_llm_provider
+from app.agents.planner import generate_plan
+from app.models.plan import Plan
 
 app = FastAPI(title="Plateforme Multi-Agents — API")
 
@@ -35,3 +37,28 @@ async def test_llm(req: EchoRequest):
         response_model=EchoResult,
     )
     return result
+
+
+class PlanRequest(BaseModel):
+    problem_statement: str
+
+
+@app.post("/plan")
+async def plan_endpoint(req: PlanRequest):
+    """Endpoint de test du Planificateur seul, sans persistance.
+    Sera remplacé par /runs à l'étape 2b."""
+    try:
+        return await generate_plan(req.problem_statement)
+    except ValidationError as e:
+        clean_errors = [
+            {"type": err["type"], "loc": err["loc"], "msg": err["msg"]}
+            for err in e.errors()
+        ]
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "error": "plan_validation_failed",
+                "message": "Le plan généré par le modèle ne respecte pas les contraintes.",
+                "errors": clean_errors,
+            },
+        )
