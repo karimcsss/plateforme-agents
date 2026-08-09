@@ -1,7 +1,12 @@
 .venv/
 venv/
-__pycache__/
-*.pyc
+env/
 .env
-.pytest_cache/
+.env.local
+__pycache__/
+*.py[cod]
 *.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.log

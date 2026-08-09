@@ -1,0 +1,13 @@
+.venv/
+backend/.venv/
+backend/.env
+backend/__pycache__/
+frontend/node_modules/
+frontend/.next/
+frontend/.env.local
+.pytest_cache/
+*.pyc
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
