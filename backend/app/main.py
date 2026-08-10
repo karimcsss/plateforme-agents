@@ -4,6 +4,8 @@ from pydantic import BaseModel, ValidationError
 from app.llm.factory import get_llm_provider
 from app.agents.planner import generate_plan
 from app.models.plan import Plan
+from app.db.client import get_supabase
+from app.models.run import Run
 
 app = FastAPI(title="Plateforme Multi-Agents — API")
 
@@ -62,3 +64,57 @@ async def plan_endpoint(req: PlanRequest):
                 "errors": clean_errors,
             },
         )
+        
+
+
+
+class RunRequest(BaseModel):
+    problem_statement: str
+
+
+@app.post("/runs", response_model=Run)
+async def create_run(req: RunRequest):
+    supabase = get_supabase()
+
+    # 1. Créer le run en base, statut initial "planning"
+    insert_result = (
+        supabase.table("runs")
+        .insert({"problem_statement": req.problem_statement, "status": "planning"})
+        .execute()
+    )
+    run_row = insert_result.data[0]
+    run_id = run_row["id"]
+
+    # 2. Appeler le Planificateur
+    try:
+        plan = await generate_plan(req.problem_statement)
+    except ValidationError as e:
+        clean_errors = [
+            {"type": err["type"], "loc": err["loc"], "msg": err["msg"]}
+            for err in e.errors()
+        ]
+        update_result = (
+            supabase.table("runs")
+            .update({"status": "plan_failed", "error_detail": {"errors": clean_errors}})
+            .eq("id", run_id)
+            .execute()
+        )
+        return update_result.data[0]
+
+    # 3. Plan valide → mise à jour du run
+    update_result = (
+        supabase.table("runs")
+        .update({"status": "planned", "plan": plan.model_dump()})
+        .eq("id", run_id)
+        .execute()
+    )
+    return update_result.data[0]
+
+
+@app.get("/runs/{run_id}", response_model=Run)
+async def get_run(run_id: str):
+    supabase = get_supabase()
+    result = supabase.table("runs").select("*").eq("id", run_id).execute()
+    if not result.data:
+        raise HTTPException(status_code=404, detail="Run introuvable")
+    return result.data[0]
