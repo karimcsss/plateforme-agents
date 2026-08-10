@@ -18,6 +18,7 @@ class GroqProvider(LLMProvider):
             base_url="https://api.groq.com/openai/v1",
         )
         self.model = model
+        self.last_usage_tokens = 0
 
     async def complete_structured(
         self,
@@ -46,6 +47,9 @@ class GroqProvider(LLMProvider):
             tool_choice={"type": "function", "function": {"name": "emit_result"}},
             temperature=0,
         )
+
+        if resp.usage:
+            self.last_usage_tokens = resp.usage.total_tokens
 
         tool_call = resp.choices[0].message.tool_calls[0]
         raw_args = json.loads(tool_call.function.arguments)
