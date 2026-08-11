@@ -1,11 +1,11 @@
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, ValidationError
 
-from app.llm.factory import get_llm_provider
 from app.agents.planner import generate_plan
-from app.models.plan import Plan
 from app.db.client import get_supabase
+from app.llm.factory import get_llm_provider
 from app.models.run import Run
+from app.orchestrator.dag_runner import execute_plan
 
 app = FastAPI(title="Plateforme Multi-Agents — API")
 
@@ -27,8 +27,6 @@ async def health():
 
 @app.post("/test-llm", response_model=EchoResult)
 async def test_llm(req: EchoRequest):
-    """Endpoint jetable : valide que la sortie structurée fonctionne
-    avant de construire le Planificateur dessus."""
     provider = get_llm_provider()
     result = await provider.complete_structured(
         system_prompt=(
@@ -47,8 +45,6 @@ class PlanRequest(BaseModel):
 
 @app.post("/plan")
 async def plan_endpoint(req: PlanRequest):
-    """Endpoint de test du Planificateur seul, sans persistance.
-    Sera remplacé par /runs à l'étape 2b."""
     try:
         return await generate_plan(req.problem_statement)
     except ValidationError as e:
@@ -64,8 +60,6 @@ async def plan_endpoint(req: PlanRequest):
                 "errors": clean_errors,
             },
         )
-        
-
 
 
 class RunRequest(BaseModel):
@@ -76,16 +70,18 @@ class RunRequest(BaseModel):
 async def create_run(req: RunRequest):
     supabase = get_supabase()
 
-    # 1. Créer le run en base, statut initial "planning"
     insert_result = (
         supabase.table("runs")
         .insert({"problem_statement": req.problem_statement, "status": "planning"})
         .execute()
     )
+
+    if not insert_result.data:
+        raise HTTPException(status_code=500, detail="Impossible de créer le run")
+
     run_row = insert_result.data[0]
     run_id = run_row["id"]
 
-    # 2. Appeler le Planificateur
     try:
         plan = await generate_plan(req.problem_statement)
     except ValidationError as e:
@@ -95,20 +91,27 @@ async def create_run(req: RunRequest):
         ]
         update_result = (
             supabase.table("runs")
-            .update({"status": "plan_failed", "error_detail": {"errors": clean_errors}})
+            .update(
+                {
+                    "status": "plan_failed",
+                    "error_detail": {"errors": clean_errors},
+                }
+            )
             .eq("id", run_id)
             .execute()
         )
         return update_result.data[0]
 
-    # 3. Plan valide → mise à jour du run
-    update_result = (
-        supabase.table("runs")
-        .update({"status": "planned", "plan": plan.model_dump()})
-        .eq("id", run_id)
-        .execute()
-    )
-    return update_result.data[0]
+    supabase.table("runs").update(
+        {"status": "planned", "plan": plan.model_dump()}
+    ).eq("id", run_id).execute()
+
+    await execute_plan(run_id, plan)
+
+    final_result = supabase.table("runs").select("*").eq("id", run_id).execute()
+    if not final_result.data:
+        raise HTTPException(status_code=404, detail="Run introuvable")
+    return final_result.data[0]
 
 
 @app.get("/runs/{run_id}", response_model=Run)
