@@ -3,7 +3,10 @@ from pydantic import BaseModel
 
 from app.models.plan import Plan
 
-RunStatus = Literal["planning", "plan_failed", "planned", "running", "completed", "failed"]
+RunStatus = Literal[
+    "planning", "plan_failed", "planned", "pending_approval",
+    "running", "completed", "failed", "rejected"
+]
 
 
 class Run(BaseModel):

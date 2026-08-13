@@ -4,6 +4,8 @@ from pydantic import BaseModel, ValidationError
 from app.agents.planner import generate_plan
 from app.db.client import get_supabase
 from app.llm.factory import get_llm_provider
+from app.models.approval import ApprovalDecision
+from app.models.plan import Plan
 from app.models.run import Run
 from app.orchestrator.dag_runner import execute_plan
 
@@ -102,6 +104,25 @@ async def create_run(req: RunRequest):
         )
         return update_result.data[0]
 
+    # Plan valide : si le Planificateur juge qu'une validation humaine est
+    # necessaire, on s'arrete ICI, avant toute execution d'agent (F6).
+    if plan.requires_human_approval:
+        supabase.table("runs").update({
+            "status": "pending_approval",
+            "plan": plan.model_dump(),
+        }).eq("id", run_id).execute()
+
+        reason = ", ".join(plan.approval_triggers) if plan.approval_triggers else "raison non precisee"
+        supabase.table("human_approvals").insert({
+            "run_id": run_id,
+            "trigger_reason": reason,
+            "status": "pending",
+        }).execute()
+
+        final_result = supabase.table("runs").select("*").eq("id", run_id).execute()
+        return final_result.data[0]
+
+    # Sinon, execution directe comme avant
     supabase.table("runs").update(
         {"status": "planned", "plan": plan.model_dump()}
     ).eq("id", run_id).execute()
@@ -114,6 +135,40 @@ async def create_run(req: RunRequest):
     return final_result.data[0]
 
 
+@app.post("/runs/{run_id}/approve", response_model=Run)
+async def approve_run(run_id: str, decision: ApprovalDecision):
+    supabase = get_supabase()
+
+    run_result = supabase.table("runs").select("*").eq("id", run_id).execute()
+    if not run_result.data:
+        raise HTTPException(status_code=404, detail="Run introuvable")
+    run_row = run_result.data[0]
+
+    if run_row["status"] != "pending_approval":
+        raise HTTPException(
+            status_code=409,
+            detail=f"Ce run n'est pas en attente d'approbation (statut actuel : {run_row['status']})",
+        )
+
+    supabase.table("human_approvals").update({
+        "status": decision.decision,
+        "resolved_at": "now()",
+    }).eq("run_id", run_id).eq("status", "pending").execute()
+
+    if decision.decision == "rejected":
+        supabase.table("runs").update({"status": "rejected"}).eq("id", run_id).execute()
+        final_result = supabase.table("runs").select("*").eq("id", run_id).execute()
+        return final_result.data[0]
+
+    # Approuve : on reprend l'execution la ou elle s'est arretee
+    plan = Plan.model_validate(run_row["plan"])
+    supabase.table("runs").update({"status": "planned"}).eq("id", run_id).execute()
+    await execute_plan(run_id, plan)
+
+    final_result = supabase.table("runs").select("*").eq("id", run_id).execute()
+    return final_result.data[0]
+
+
 @app.get("/runs/{run_id}", response_model=Run)
 async def get_run(run_id: str):
     supabase = get_supabase()
@@ -121,6 +176,7 @@ async def get_run(run_id: str):
     if not result.data:
         raise HTTPException(status_code=404, detail="Run introuvable")
     return result.data[0]
+
 
 @app.get("/runs/{run_id}/logs")
 async def get_run_logs(run_id: str):
