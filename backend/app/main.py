@@ -121,3 +121,15 @@ async def get_run(run_id: str):
     if not result.data:
         raise HTTPException(status_code=404, detail="Run introuvable")
     return result.data[0]
+
+@app.get("/runs/{run_id}/logs")
+async def get_run_logs(run_id: str):
+    supabase = get_supabase()
+    result = (
+        supabase.table("execution_logs")
+        .select("*")
+        .eq("run_id", run_id)
+        .order("created_at")
+        .execute()
+    )
+    return result.data

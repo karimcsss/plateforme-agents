@@ -3,6 +3,7 @@ from app.llm.factory import get_llm_provider
 from app.models.agent_result import AgentResult
 from app.models.plan import RequiredAgent
 from app.tools.web_search import web_search
+from app.observability.logger import log_event
 
 WORKER_SYSTEM_PROMPT = """Tu es un agent de recherche spécialisé, membre d'une équipe
 d'agents IA. On te donne un rôle, un objectif, et des résultats de recherche web réels.
@@ -22,15 +23,31 @@ Règles strictes :
 """
 
 
-async def run_agent(agent: RequiredAgent, context: str) -> AgentResult:
-    """Exécute un agent : recherche web puis synthèse structurée.
-    `context` = l'objectif global du problème, pour que l'agent garde
-    en tête le fil du problème initial, pas seulement son propre `goal`."""
+async def run_agent(agent: RequiredAgent, context: str, run_id: str | None = None) -> AgentResult:
     start = time.monotonic()
 
+    search_start = time.monotonic()
     try:
         search_results = web_search(agent.goal)
+        search_latency = int((time.monotonic() - search_start) * 1000)
+        if run_id:
+            await log_event(
+                run_id=run_id,
+                event_type="tool_call",
+                agent_id=agent.id,
+                payload={"tool": "web_search", "query": agent.goal, "results_count": len(search_results)},
+                latency_ms=search_latency,
+            )
     except Exception as e:
+        search_latency = int((time.monotonic() - search_start) * 1000)
+        if run_id:
+            await log_event(
+                run_id=run_id,
+                event_type="error",
+                agent_id=agent.id,
+                payload={"stage": "web_search", "error": str(e)},
+                latency_ms=search_latency,
+            )
         return AgentResult(
             agent_id=agent.id,
             status="failed",
@@ -62,9 +79,7 @@ Résultats de recherche web :
 """
 
     provider = get_llm_provider()
-
-    class WorkerOutput(AgentResult):
-        pass  # même schéma, réutilisé tel quel pour le tool calling
+    llm_start = time.monotonic()
 
     try:
         raw_result = await provider.complete_structured(
@@ -72,7 +87,26 @@ Résultats de recherche web :
             user_prompt=user_prompt,
             response_model=AgentResult,
         )
+        llm_latency = int((time.monotonic() - llm_start) * 1000)
+        if run_id:
+            await log_event(
+                run_id=run_id,
+                event_type="llm_call",
+                agent_id=agent.id,
+                payload={"model": provider.model},
+                latency_ms=llm_latency,
+                tokens_used=provider.last_usage_tokens,
+            )
     except Exception as e:
+        llm_latency = int((time.monotonic() - llm_start) * 1000)
+        if run_id:
+            await log_event(
+                run_id=run_id,
+                event_type="error",
+                agent_id=agent.id,
+                payload={"stage": "llm_generation", "error": str(e)},
+                latency_ms=llm_latency,
+            )
         return AgentResult(
             agent_id=agent.id,
             status="failed",
@@ -82,6 +116,6 @@ Résultats de recherche web :
         )
 
     raw_result.agent_id = agent.id
-    raw_result.tokens_used = provider.last_usage_tokens  # écrase la valeur hallucinée par la vraie
+    raw_result.tokens_used = provider.last_usage_tokens
     raw_result.duration_ms = int((time.monotonic() - start) * 1000)
     return raw_result
