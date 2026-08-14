@@ -12,8 +12,17 @@ from app.models.approval import ApprovalDecision
 from app.models.plan import Plan
 from app.models.run import Run
 from app.orchestrator.dag_runner import execute_plan
+from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI(title="Plateforme Multi-Agents — API")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
 
 # Garde une reference forte vers les taches de fond : sans ca, le garbage
 # collector Python peut annuler une tache asyncio non referencee ailleurs.
