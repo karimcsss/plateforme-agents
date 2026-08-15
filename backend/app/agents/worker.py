@@ -87,32 +87,44 @@ Résultats de recherche web :
             user_prompt=user_prompt,
             response_model=AgentResult,
         )
-        llm_latency = int((time.monotonic() - llm_start) * 1000)
-        if run_id:
-            await log_event(
-                run_id=run_id,
-                event_type="llm_call",
-                agent_id=agent.id,
-                payload={"model": provider.model},
-                latency_ms=llm_latency,
-                tokens_used=provider.last_usage_tokens,
+    except Exception as first_error:
+        try:
+            raw_result = await provider.complete_structured(
+                system_prompt=WORKER_SYSTEM_PROMPT,
+                user_prompt=user_prompt,
+                response_model=AgentResult,
             )
-    except Exception as e:
-        llm_latency = int((time.monotonic() - llm_start) * 1000)
-        if run_id:
-            await log_event(
-                run_id=run_id,
-                event_type="error",
+        except Exception as second_error:
+            llm_latency = int((time.monotonic() - llm_start) * 1000)
+            if run_id:
+                await log_event(
+                    run_id=run_id,
+                    event_type="error",
+                    agent_id=agent.id,
+                    payload={
+                        "stage": "llm_generation",
+                        "error_attempt_1": str(first_error),
+                        "error_attempt_2": str(second_error),
+                    },
+                    latency_ms=llm_latency,
+                )
+            return AgentResult(
                 agent_id=agent.id,
-                payload={"stage": "llm_generation", "error": str(e)},
-                latency_ms=llm_latency,
+                status="failed",
+                findings=[],
+                errors=[f"Échec de la génération structurée (après retry) : {str(second_error)}"],
+                duration_ms=int((time.monotonic() - start) * 1000),
             )
-        return AgentResult(
+
+    llm_latency = int((time.monotonic() - llm_start) * 1000)
+    if run_id:
+        await log_event(
+            run_id=run_id,
+            event_type="llm_call",
             agent_id=agent.id,
-            status="failed",
-            findings=[],
-            errors=[f"Échec de la génération structurée : {str(e)}"],
-            duration_ms=int((time.monotonic() - start) * 1000),
+            payload={"model": provider.model},
+            latency_ms=llm_latency,
+            tokens_used=provider.last_usage_tokens,
         )
 
     raw_result.agent_id = agent.id

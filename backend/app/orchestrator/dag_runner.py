@@ -1,19 +1,17 @@
 import asyncio
 from app.agents.worker import run_agent
 from app.agents.critic import review_results
+from app.agents.synthesizer import synthesize_report
 from app.db.client import get_supabase
 from app.models.plan import Plan, RequiredAgent
 from app.models.agent_result import AgentResult
 from app.models.critic import CriticReview
 from app.observability.logger import log_event
 
-RETRY_BUDGET_PER_RUN = 1  # global, pas par agent
+RETRY_BUDGET_PER_RUN = 1
 
 
 def _topological_batches(agents: list[RequiredAgent]) -> list[list[RequiredAgent]]:
-    """Groupe les agents en 'vagues' executables en parallele.
-    Vague 0 = agents sans dependance. Vague 1 = agents dont toutes les
-    dependances sont dans les vagues precedentes. Etc."""
     remaining = {a.id: a for a in agents}
     done: set[str] = set()
     batches: list[list[RequiredAgent]] = []
@@ -55,9 +53,6 @@ async def _run_and_persist(run_id: str, agent: RequiredAgent, context: str) -> A
 async def _handle_contestations(
     run_id: str, plan: Plan, results: list[AgentResult]
 ) -> list[AgentResult]:
-    """Fait relire les resultats par le Critique. Si conteste, re-execute
-    au plus RETRY_BUDGET_PER_RUN agents (les plus faibles en confiance
-    en premier), remplace leur resultat, enregistre la contestation."""
     review: CriticReview = await review_results(results)
 
     if not review.contestations:
@@ -130,8 +125,6 @@ async def _handle_contestations(
 
 
 async def execute_plan(run_id: str, plan: Plan) -> list[AgentResult]:
-    """Execute tout le plan : vague par vague, agents d'une meme vague
-    en parallele via asyncio.gather. Puis fait relire par le Critique."""
     batches = _topological_batches(plan.required_agents)
     all_results: list[AgentResult] = []
 
@@ -147,7 +140,26 @@ async def execute_plan(run_id: str, plan: Plan) -> list[AgentResult]:
 
     all_results = await _handle_contestations(run_id, plan, all_results)
 
-    final_status = "completed" if all(r.status == "completed" for r in all_results) else "failed"
+    # Nouveau : synthese finale, seulement si au moins un agent a produit des findings
+    report = None
+    if any(r.findings for r in all_results):
+        try:
+            report = await synthesize_report(plan.objective, all_results)
+            supabase.table("runs").update({"report": report.model_dump()}).eq("id", run_id).execute()
+            await log_event(run_id=run_id, event_type="status_change", payload={"event": "report_generated"})
+        except Exception as e:
+            await log_event(
+                run_id=run_id,
+                event_type="error",
+                payload={"stage": "synthesis", "error": str(e)},
+            )
+
+        # Nouveau : le run est "completed" si au moins un rapport a pu être généré,
+    # même si certains agents individuels ont échoué — le résultat reste utile.
+    if report is not None:
+        final_status = "completed"
+    else:
+        final_status = "completed" if all(r.status == "completed" for r in all_results) else "failed"
     supabase.table("runs").update({"status": final_status}).eq("id", run_id).execute()
     await log_event(run_id=run_id, event_type="status_change", payload={"new_status": final_status})
 

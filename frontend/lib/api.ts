@@ -13,12 +13,20 @@ export interface Plan {
   workflow: string;
   requires_human_approval: boolean;
 }
+export interface Report {
+  summary: string;
+  key_findings: string[];
+  recommendations: string[];
+  risks: string[];
+  sources: string[];
+}
 
 export interface Run {
   id: string;
   problem_statement: string;
   status: string;
   plan: Plan | null;
+  report: Report | null;
   error_detail: Record<string, unknown> | null;
 }
 

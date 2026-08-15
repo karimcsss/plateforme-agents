@@ -46,6 +46,7 @@ class GroqProvider(LLMProvider):
             tools=[tool],
             tool_choice={"type": "function", "function": {"name": "emit_result"}},
             temperature=0,
+            max_tokens=4096,
         )
 
         if resp.usage:

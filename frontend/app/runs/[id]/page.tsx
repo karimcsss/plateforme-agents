@@ -6,6 +6,7 @@ import { getRun, approveRun, Run } from '@/lib/api';
 import { useRunStream } from '@/lib/useRunStream';
 import AgentGraph from '@/components/AgentGraph';
 import EventFeed from '@/components/EventFeed';
+import ReportView from '@/components/ReportView';
 
 export default function RunPage() {
   const { id } = useParams<{ id: string }>();
@@ -86,6 +87,7 @@ export default function RunPage() {
           <EventFeed logs={logs} />
         </div>
       </div>
+      {run.report && <ReportView report={run.report} />}
     </main>
   );
 }
