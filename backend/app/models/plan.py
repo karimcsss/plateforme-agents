@@ -1,4 +1,4 @@
-from typing import Literal
+from typing import Literal, Union
 from pydantic import BaseModel, Field, field_validator
 
 
@@ -7,21 +7,25 @@ class RequiredAgent(BaseModel):
     role: str = Field(description="Titre du rôle, ex: 'Analyste de marché'")
     goal: str = Field(description="Objectif précis et actionnable de cet agent")
     tools: list[Literal["web_search"]]
-    depends_on: list[str] = Field(
-        default_factory=list,
-        description="Liste des id d'agents dont dépend celui-ci (vide si aucune dépendance)",
-    )
+    depends_on: list[str] = Field(default_factory=list)
 
 
 ApprovalTrigger = Literal["high_cost", "low_confidence", "high_ambiguity"]
+
 
 class Plan(BaseModel):
     objective: str = Field(description="Reformulation claire de l'objectif global")
     required_agents: list[RequiredAgent]
     workflow: Literal["dag", "sequential"]
-    requires_human_approval: bool
+    requires_human_approval: Union[bool, str]
     approval_triggers: list[ApprovalTrigger] = Field(default_factory=list)
 
+    @field_validator("requires_human_approval", mode="before")
+    @classmethod
+    def coerce_bool(cls, v):
+        if isinstance(v, str):
+            return v.strip().lower() == "true"
+        return v
 
     @field_validator("required_agents")
     @classmethod
@@ -30,6 +34,20 @@ class Plan(BaseModel):
             raise ValueError(
                 f"Le plan doit contenir entre 3 et 5 agents (MVP), reçu : {len(v)}"
             )
+        return v
+
+    @field_validator("required_agents")
+    @classmethod
+    def validate_dependencies_exist(cls, v: list[RequiredAgent]) -> list[RequiredAgent]:
+        ids = {a.id for a in v}
+        for agent in v:
+            for dep in agent.depends_on:
+                if dep not in ids:
+                    raise ValueError(
+                        f"L'agent '{agent.id}' dépend de '{dep}' qui n'existe pas dans le plan"
+                    )
+                if dep == agent.id:
+                    raise ValueError(f"L'agent '{agent.id}' ne peut pas dépendre de lui-même")
         return v
 
     @field_validator("required_agents")
