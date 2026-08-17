@@ -24,18 +24,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-@app.get("/debug-env")
-async def debug_env():
-    from app.config import SUPABASE_URL, SUPABASE_KEY, GROQ_API_KEY, TAVILY_API_KEY
-    return {
-        "SUPABASE_URL_set": bool(SUPABASE_URL),
-        "SUPABASE_URL_len": len(SUPABASE_URL) if SUPABASE_URL else 0,
-        "SUPABASE_KEY_set": bool(SUPABASE_KEY),
-        "SUPABASE_KEY_len": len(SUPABASE_KEY) if SUPABASE_KEY else 0,
-        "SUPABASE_KEY_prefix": SUPABASE_KEY[:10] if SUPABASE_KEY else None,
-        "GROQ_API_KEY_set": bool(GROQ_API_KEY),
-        "TAVILY_API_KEY_set": bool(TAVILY_API_KEY),
-    }
+
 
 
 
