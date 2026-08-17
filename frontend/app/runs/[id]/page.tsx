@@ -7,6 +7,7 @@ import { useRunStream } from '@/lib/useRunStream';
 import AgentGraph from '@/components/AgentGraph';
 import EventFeed from '@/components/EventFeed';
 import ReportView from '@/components/ReportView';
+import ShareExportBar from '@/components/ShareExportBar';
 
 export default function RunPage() {
   const { id } = useParams<{ id: string }>();
@@ -88,6 +89,7 @@ export default function RunPage() {
         </div>
       </div>
       {run.report && <ReportView report={run.report} />}
+      {run.report && <ShareExportBar runId={run.id} />}
     </main>
   );
 }

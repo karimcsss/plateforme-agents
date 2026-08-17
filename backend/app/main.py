@@ -14,6 +14,9 @@ from app.models.run import Run
 from app.orchestrator.dag_runner import execute_plan
 from fastapi.middleware.cors import CORSMiddleware
 
+import uuid
+from fastapi.responses import Response
+
 app = FastAPI(title="Plateforme Multi-Agents — API")
 app.add_middleware(
     CORSMiddleware,
@@ -254,3 +257,114 @@ async def stream_run(run_id: str):
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+    
+
+
+
+@app.post("/runs/{run_id}/share")
+async def share_run(run_id: str):
+    """Genere (ou reutilise) un token de partage public pour ce run."""
+    supabase = get_supabase()
+    result = supabase.table("runs").select("*").eq("id", run_id).execute()
+    if not result.data:
+        raise HTTPException(status_code=404, detail="Run introuvable")
+    run_row = result.data[0]
+
+    token = run_row.get("share_token")
+    if not token:
+        token = str(uuid.uuid4())
+        supabase.table("runs").update({
+            "share_token": token,
+            "share_enabled": True,
+        }).eq("id", run_id).execute()
+    else:
+        supabase.table("runs").update({"share_enabled": True}).eq("id", run_id).execute()
+
+    return {"share_token": token, "share_url": f"/share/{token}"}
+
+
+@app.post("/runs/{run_id}/unshare")
+async def unshare_run(run_id: str):
+    supabase = get_supabase()
+    supabase.table("runs").update({"share_enabled": False}).eq("id", run_id).execute()
+    return {"status": "unshared"}
+
+
+@app.get("/public/{share_token}", response_model=Run)
+async def get_public_run(share_token: str):
+    """Acces public en lecture seule, sans authentification.
+    Ne fonctionne que si share_enabled est vrai."""
+    supabase = get_supabase()
+    result = (
+        supabase.table("runs")
+        .select("*")
+        .eq("share_token", share_token)
+        .eq("share_enabled", True)
+        .execute()
+    )
+    if not result.data:
+        raise HTTPException(status_code=404, detail="Lien de partage introuvable ou desactive")
+    return result.data[0]
+
+
+def _report_to_markdown(problem_statement: str, report: dict) -> str:
+    lines = [
+        f"# Rapport — {problem_statement}",
+        "",
+        "## Résumé",
+        report.get("summary", ""),
+        "",
+        "## Faits clés",
+    ]
+    lines += [f"- {f}" for f in report.get("key_findings", [])]
+
+    if report.get("recommendations"):
+        lines += ["", "## Recommandations"]
+        lines += [f"- {r}" for r in report["recommendations"]]
+
+    if report.get("risks"):
+        lines += ["", "## Limites / Risques"]
+        lines += [f"- {r}" for r in report["risks"]]
+
+    if report.get("sources"):
+        lines += ["", "## Sources"]
+        lines += [f"- {s}" for s in report["sources"]]
+
+    return "\n".join(lines)
+
+
+@app.get("/runs/{run_id}/export")
+async def export_run(run_id: str, format: str = "md"):
+    supabase = get_supabase()
+    result = supabase.table("runs").select("*").eq("id", run_id).execute()
+    if not result.data:
+        raise HTTPException(status_code=404, detail="Run introuvable")
+    run_row = result.data[0]
+
+    if not run_row.get("report"):
+        raise HTTPException(status_code=409, detail="Aucun rapport disponible pour ce run")
+
+    if format == "json":
+        import json
+        content = json.dumps(run_row, indent=2, ensure_ascii=False, default=str)
+        return Response(
+            content=content,
+            media_type="application/json",
+            headers={"Content-Disposition": f'attachment; filename="rapport_{run_id}.json"'},
+        )
+
+    if format == "md":
+        content = _report_to_markdown(run_row["problem_statement"], run_row["report"])
+        return Response(
+            content=content,
+            media_type="text/markdown",
+            headers={"Content-Disposition": f'attachment; filename="rapport_{run_id}.md"'},
+        )
+
+    raise HTTPException(status_code=400, detail="Format invalide, utilise 'md' ou 'json'")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000", "https://*.vercel.app"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)

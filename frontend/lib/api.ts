@@ -61,3 +61,29 @@ export async function approveRun(runId: string, decision: 'approved' | 'rejected
   }
   return res.json();
 }
+export interface Run {
+  id: string;
+  problem_statement: string;
+  status: string;
+  plan: Plan | null;
+  report: Report | null;
+  error_detail: Record<string, unknown> | null;
+  share_token?: string | null;
+  share_enabled?: boolean;
+}
+
+export async function shareRun(runId: string): Promise<{ share_token: string; share_url: string }> {
+  const res = await fetch(`${API_BASE}/runs/${runId}/share`, { method: 'POST' });
+  if (!res.ok) throw new Error('Échec du partage');
+  return res.json();
+}
+
+export async function getPublicRun(shareToken: string): Promise<Run> {
+  const res = await fetch(`${API_BASE}/public/${shareToken}`);
+  if (!res.ok) throw new Error('Lien introuvable ou désactivé');
+  return res.json();
+}
+
+export function getExportUrl(runId: string, format: 'md' | 'json'): string {
+  return `${API_BASE}/runs/${runId}/export?format=${format}`;
+}

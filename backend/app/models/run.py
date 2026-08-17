@@ -10,6 +10,8 @@ RunStatus = Literal[
 ]
 
 
+
+
 class Run(BaseModel):
     id: str
     problem_statement: str
@@ -17,3 +19,5 @@ class Run(BaseModel):
     plan: Optional[Plan] = None
     report: Optional[Report] = None
     error_detail: Optional[dict] = None
+    share_token: Optional[str] = None
+    share_enabled: Optional[bool] = False
