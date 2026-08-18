@@ -20,7 +20,10 @@ from fastapi.responses import Response
 app = FastAPI(title="Plateforme Multi-Agents — API")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
+    allow_origins=[
+        "http://localhost:3000",
+        "https://plateforme-agents00-lac.vercel.app",
+    ],
     allow_methods=["*"],
     allow_headers=["*"],
 )
