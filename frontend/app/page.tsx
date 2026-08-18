@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { createRun } from '@/lib/api';
-import ReportView from '@/components/ReportView';
+
 
 export default function Home() {
   const [problem, setProblem] = useState('');
