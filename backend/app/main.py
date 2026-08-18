@@ -1,8 +1,10 @@
 import asyncio
 import json
+import uuid
 
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import StreamingResponse
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, ValidationError
 
 from app.agents.planner import generate_plan
@@ -12,27 +14,23 @@ from app.models.approval import ApprovalDecision
 from app.models.plan import Plan
 from app.models.run import Run
 from app.orchestrator.dag_runner import execute_plan
-from fastapi.middleware.cors import CORSMiddleware
-
-import uuid
-from fastapi.responses import Response
 
 app = FastAPI(title="Plateforme Multi-Agents — API")
+
+# Single, correct CORS configuration
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
         "http://localhost:3000",
-        "https://plateforme-agents-black.vercel.app"
+        "https://plateforme-agents-black.vercel.app",
     ],
+    allow_origin_regex=r"https://.*\.vercel\.app",
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-
-#
-
-# Garde une reference forte vers les taches de fond : sans ca, le garbage
-# collector Python peut annuler une tache asyncio non referencee ailleurs.
+# Garde une reference forte vers les taches de fond
 _background_tasks: set[asyncio.Task] = set()
 
 
@@ -100,9 +98,6 @@ class RunRequest(BaseModel):
 
 @app.post("/runs", response_model=Run)
 async def create_run(req: RunRequest):
-    """Non-bloquant depuis l'Etape 8 : retourne des que le plan est
-    genere/valide, l'execution tourne en tache de fond. Le client suit
-    la progression via GET /runs/{id}/stream ou en pollant GET /runs/{id}."""
     supabase = get_supabase()
 
     insert_result = (
@@ -151,7 +146,6 @@ async def create_run(req: RunRequest):
         {"status": "planned", "plan": plan.model_dump()}
     ).eq("id", run_id).execute()
 
-    # Nouveau : ne bloque plus, l'execution continue en arriere-plan
     _spawn_execution(run_id, plan)
 
     final_result = supabase.table("runs").select("*").eq("id", run_id).execute()
@@ -186,7 +180,6 @@ async def approve_run(run_id: str, decision: ApprovalDecision):
     plan = Plan.model_validate(run_row["plan"])
     supabase.table("runs").update({"status": "planned"}).eq("id", run_id).execute()
 
-    # Nouveau : non-bloquant, comme pour /runs
     _spawn_execution(run_id, plan)
 
     final_result = supabase.table("runs").select("*").eq("id", run_id).execute()
@@ -220,9 +213,6 @@ POLL_INTERVAL_SECONDS = 1.5
 
 
 async def _run_event_stream(run_id: str):
-    """Generateur SSE : poll la base toutes les 1.5s, emet les nouveaux
-    logs et le statut courant du run. S'arrete quand le run atteint un
-    statut terminal ou reste en attente d'approbation humaine."""
     supabase = get_supabase()
     seen_log_ids: set[str] = set()
 
@@ -261,13 +251,10 @@ async def stream_run(run_id: str):
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
-    
-
 
 
 @app.post("/runs/{run_id}/share")
 async def share_run(run_id: str):
-    """Genere (ou reutilise) un token de partage public pour ce run."""
     supabase = get_supabase()
     result = supabase.table("runs").select("*").eq("id", run_id).execute()
     if not result.data:
@@ -296,8 +283,6 @@ async def unshare_run(run_id: str):
 
 @app.get("/public/{share_token}", response_model=Run)
 async def get_public_run(share_token: str):
-    """Acces public en lecture seule, sans authentification.
-    Ne fonctionne que si share_enabled est vrai."""
     supabase = get_supabase()
     result = (
         supabase.table("runs")
@@ -349,7 +334,6 @@ async def export_run(run_id: str, format: str = "md"):
         raise HTTPException(status_code=409, detail="Aucun rapport disponible pour ce run")
 
     if format == "json":
-        import json
         content = json.dumps(run_row, indent=2, ensure_ascii=False, default=str)
         return Response(
             content=content,
@@ -366,9 +350,3 @@ async def export_run(run_id: str, format: str = "md"):
         )
 
     raise HTTPException(status_code=400, detail="Format invalide, utilise 'md' ou 'json'")
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["http://localhost:3000", "https://*.vercel.app"],
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
