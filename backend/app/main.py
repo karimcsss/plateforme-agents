@@ -22,6 +22,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=[
         "http://localhost:3000",
+        "https://plateforme-agents-lac.vercel.app",
         "https://plateforme-agents00-lac.vercel.app",
     ],
     allow_methods=["*"],
@@ -29,7 +30,7 @@ app.add_middleware(
 )
 
 
-
+#
 
 # Garde une reference forte vers les taches de fond : sans ca, le garbage
 # collector Python peut annuler une tache asyncio non referencee ailleurs.
